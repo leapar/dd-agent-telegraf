@@ -15,7 +15,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
-	"github.com/influxdata/telegraf/internal"
+	"github.com/influxdata/telegraf/internal2"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/parsers/influx"
 	"github.com/influxdata/telegraf/selfstat"
@@ -30,8 +30,8 @@ import (
 
 type DDAgentListener struct {
 	ServiceAddress string
-	ReadTimeout    internal.Duration
-	WriteTimeout   internal.Duration
+	ReadTimeout    internal2.Duration
+	WriteTimeout   internal2.Duration
 	MaxBodySize    int64
 	MaxLineSize    int
 	Port           int
@@ -311,7 +311,7 @@ func (h *DDAgentListener) serveIntake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if intake.Host == "datadog-177" {
+	if intake.Host == "cfeng" {
 		fmt.Println(intake.Host)
 	}
 
@@ -341,7 +341,7 @@ func (h *DDAgentListener) serveIntake(w http.ResponseWriter, r *http.Request) {
 
 		if originTags["tags"] != nil && len(originTags["tags"].([]string)) > 0 {
 			for _, tag := range originTags["tags"].([]string) {
-				fmt.Println(tag)
+				//fmt.Println(tag)
 				tmps := strings.Split(tag,":")
 				if(len(tmps) == 2 &&  tmps[0] == "instance" && tmps[1] != ""){
 					tags[tmps[0]] = tmps[1]
@@ -354,9 +354,22 @@ func (h *DDAgentListener) serveIntake(w http.ResponseWriter, r *http.Request) {
 			fmt.Println(err2)
 		} else {
 			//metricArr = append(metricArr, m)
-			h.acc.AddFields(m.Name(), m.Fields(), m.Tags(), m.Time())
+
 		}
 		//fmt.Println(m)
+
+
+		if ometric[0] ==  "system.uptime" {
+			fields := map[string]interface{}{
+				"uptime": int64(ometric[2].(float64)),
+			}
+			//fmt.Println(int64(ometric[2].(float64)))
+			//fmt.Println(fields)
+			h.acc.AddFields("system", fields, tags,  m.Time())
+		} else {
+			h.acc.AddFields(m.Name(), m.Fields(), m.Tags(), m.Time())
+		}
+
 
 	}
 	tags := map[string]string{}
@@ -371,7 +384,7 @@ func (h *DDAgentListener) serveIntake(w http.ResponseWriter, r *http.Request) {
 	{
 
 		fields := map[string]interface{}{
-			"uptime": intake.Uptime,
+			"uptime": int64(intake.Uptime),
 		}
 		h.acc.AddFields("system", fields, tags, metricTime)
 	}
@@ -570,7 +583,7 @@ func (h *DDAgentListener) serveSeries(w http.ResponseWriter, r *http.Request) {
 
 		if serie.Tags != nil && len(serie.Tags) > 0 {
 			for _, tag := range serie.Tags {
-				fmt.Println(tag)
+				//fmt.Println(tag)
 				tmps := strings.Split(tag,":")
 				if(len(tmps) == 2 &&  tmps[0] == "instance" && tmps[1] != ""){
 					tags[tmps[0]] = tmps[1]
@@ -585,7 +598,7 @@ func (h *DDAgentListener) serveSeries(w http.ResponseWriter, r *http.Request) {
 			metricArr = append(metricArr, m)
 		}
 		//fmt.Println(m)
-		h.acc.AddFields(m.Name(), m.Fields(), m.Tags(), m.Time())
+
 
 
 		{
@@ -608,9 +621,14 @@ func (h *DDAgentListener) serveSeries(w http.ResponseWriter, r *http.Request) {
 					"usage_idle": serie.Points[0][1],
 				}
 				h.acc.AddFields("cpu", fields, cpuTags,  m.Time())
+			} else if serie.Metric ==  "system.uptime" {
+				fields := map[string]interface{}{
+					"uptime": int64(serie.Points[0][1]),
+				}
+				h.acc.AddFields("system", fields, cpuTags,  m.Time())
+			} else {
+				h.acc.AddFields(m.Name(), m.Fields(), m.Tags(), m.Time())
 			}
-
-
 
 		}
 	}
