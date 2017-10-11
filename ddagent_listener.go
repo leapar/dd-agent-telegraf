@@ -29,39 +29,49 @@ import (
 
 
 type DDAgentListener struct {
+	//侦听地址与端口service_address = ":8186"
 	ServiceAddress string
+	//## timeouts
+	//read_timeout = "10s"
+	//write_timeout = "10s"
 	ReadTimeout    internal2.Duration
 	WriteTimeout   internal2.Duration
-	MaxBodySize    int64
-	MaxLineSize    int
+
+	//侦听端口
 	Port           int
 
+	//https相关
 	TlsAllowedCacerts []string
 	TlsCert           string
 	TlsKey            string
 
+	//互斥锁
 	mu sync.Mutex
+	//进行同步，为了优雅的关闭服务
 	wg sync.WaitGroup
 
+	//http server服务
 	listener net.Listener
 
-	parser influx.InfluxParser
+	//指标容器
 	acc    telegraf.Accumulator
 
-	RequestsRecv    selfstat.Stat
-	RequestsServed  selfstat.Stat
+	//插件状态统计
+	RequestsRecv    selfstat.Stat//接收到的请求数
+	RequestsServed  selfstat.Stat//处理的请求数
 
-	PingsServed     selfstat.Stat
-	PingsRecv       selfstat.Stat
+	//插件状态统计
+	PingsServed     selfstat.Stat//处理的ping数
+	PingsRecv       selfstat.Stat//接收到的ping数
 
-	IntakeServed     selfstat.Stat
-	IntakeRecv       selfstat.Stat
+	IntakeServed     selfstat.Stat//已处理的intake接口数
+	IntakeRecv       selfstat.Stat//接收到的intake接口数
 
-	SeriesServed     selfstat.Stat
-	SeriesRecv       selfstat.Stat
+	SeriesServed     selfstat.Stat//已处理的series接口数
+	SeriesRecv       selfstat.Stat//接收到的series接口数
 
 
-	NotFoundsServed selfstat.Stat
+	NotFoundsServed selfstat.Stat//统计访问不存的url path数
 }
 
 const sampleConfig = `
@@ -95,6 +105,7 @@ func (h *DDAgentListener) Gather(_ telegraf.Accumulator) error {
 }
 
 // Start starts the http listener service.
+//初始化一个http server 没有其他
 func (h *DDAgentListener) Start(acc telegraf.Accumulator) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -161,6 +172,7 @@ func (h *DDAgentListener) Start(acc telegraf.Accumulator) error {
 }
 
 // Stop cleans up all resources
+//停止http server
 func (h *DDAgentListener) Stop() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -171,6 +183,8 @@ func (h *DDAgentListener) Stop() {
 	log.Println("I! Stopped HTTP listener service on ", h.ServiceAddress)
 }
 
+//处理请求
+//datadog 探针就两个请求/api/v1/series/和/intake/
 func (h *DDAgentListener) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	h.RequestsRecv.Incr(1)
 	defer h.RequestsServed.Incr(1)
@@ -227,6 +241,24 @@ type Intake struct {
 	Metric []interface{} `json:"metric"`
 }
 
+
+/*
+serveIntake 跟 serveSeries就是这个插件的核心
+但是也没什么讲的，首先要准备工作：
+1.首先自己安装datadog探针
+2.抓包
+3.分析数据包的json格式
+
+serveIntake 跟 serveSeries其实就是把json格式转换一次，变成如下格式
+h.acc.AddFields(m.Name(), m.Fields(), m.Tags(), m.Time())
+
+m.Name()就是指标名称 system cpu disk zookeeper 等等
+m.Fields() max=100 total=200 free=50这样的键值对
+m.Tags() 就是指标tag 如果这个都不懂 别看这份代码 你看不懂
+m.Time() 时间戳
+
+这样整个探针开发就完成了
+*/
 func (h *DDAgentListener) serveIntake(w http.ResponseWriter, r *http.Request) {
 	// Check that the content length is not too large for us to handle.
 	defer  r.Body.Close()
@@ -636,29 +668,6 @@ func (h *DDAgentListener) serveSeries(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func (h *DDAgentListener) parse(b []byte, t time.Time, precision string) error {
-	metrics, err := h.parser.ParseWithDefaultTimePrecision(b, t, precision)
-
-	for _, m := range metrics {
-		h.acc.AddFields(m.Name(), m.Fields(), m.Tags(), m.Time())
-	}
-
-	return err
-}
-
-func tooLarge(res http.ResponseWriter) {
-	res.Header().Set("Content-Type", "application/json")
-	res.Header().Set("X-Influxdb-Version", "1.0")
-	res.WriteHeader(http.StatusRequestEntityTooLarge)
-	res.Write([]byte(`{"error":"http: request body too large"}`))
-}
-
-func badRequest(res http.ResponseWriter) {
-	res.Header().Set("Content-Type", "application/json")
-	res.Header().Set("X-Influxdb-Version", "1.0")
-	res.WriteHeader(http.StatusBadRequest)
-	res.Write([]byte(`{"error":"http: bad request"}`))
-}
 
 func (h *DDAgentListener) getTLSConfig() *tls.Config {
 	tlsConf := &tls.Config{
@@ -692,6 +701,8 @@ func (h *DDAgentListener) getTLSConfig() *tls.Config {
 	return tlsConf
 }
 
+//入口函数
+//记得在all.go里面加入_ "github.com/influxdata/telegraf/plugins/inputs/ddagent_listener"进行插件初始化
 func init() {
 	inputs.Add("ddagent_listener", func() telegraf.Input {
 		return &DDAgentListener{
